@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/base64"
+	"flag"
 	"fmt"
-	"log"
+	"os"
+	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend"
@@ -12,49 +15,128 @@ import (
 
 type Circuit struct {
 	X frontend.Variable `gnark:"x"`
-	Z frontend.Variable `gnark:"z"`
 	Y frontend.Variable `gnark:",public"`
 }
 
 func (c *Circuit) Define(curveID ecc.ID, cs *frontend.ConstraintSystem) error {
-	// x**2 + x + 5 == y
-	// x3 := cs.Mul(c.X, c.X)
-	z := cs.Mul(c.X, c.Z)
-	y := cs.Mul(z, 5)
+	y := cs.Mul(c.X, c.X, c.X)
 	cs.AssertIsEqual(c.Y, y)
 	return nil
 }
 
 func main() {
-	var c Circuit
+	err := root(os.Args[1:])
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+}
 
-	// compiles our circuit into a R1CS
+func root(args []string) error {
+	f := flag.NewFlagSet("zkp", flag.ContinueOnError)
+	f.Bool("h", false, "")
+	err := f.Parse(args)
+	if err != nil {
+		return err
+	}
+	args = f.Args()
+	if len(args) == 0 {
+		f.Usage()
+		return nil
+	}
+
+	cmd := args[0]
+	cmdArgs := args[1:]
+	switch {
+	case strings.HasPrefix("prove", cmd):
+		err = prove(cmdArgs)
+	case strings.HasPrefix("verify", cmd):
+		err = verify(cmdArgs)
+	}
+	return err
+}
+
+func prove(args []string) error {
+	f := flag.NewFlagSet("zkp prove", flag.ContinueOnError)
+	f.Bool("h", false, "")
+	var x, y int
+	f.IntVar(&x, "x", 0, "x")
+	f.IntVar(&y, "y", 0, "y")
+	err := f.Parse(args)
+	if err != nil {
+		return err
+	}
+
+	var c Circuit
 	r1cs, err := frontend.Compile(ecc.BN254, backend.GROTH16, &c)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	pk, vk, err := groth16.Setup(r1cs)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Println("PK:", pk)
-	fmt.Println("VK:", vk)
+
+	fmt.Print("VK: ")
+	vkOut := base64.NewEncoder(base64.StdEncoding, os.Stdout)
+	vk.WriteTo(vkOut)
+	vkOut.Close()
+	fmt.Println()
 
 	var solution Circuit
-	solution.X.Assign(3)
-	solution.Z.Assign(2)
-	solution.Y.Assign(30)
+	solution.X.Assign(x)
+	solution.Y.Assign(y)
 
 	proof, err := groth16.Prove(r1cs, pk, &solution)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	fmt.Println("Proof:", proof)
+	fmt.Print("Proof: ")
+	proofOut := base64.NewEncoder(base64.StdEncoding, os.Stdout)
+	proof.WriteTo(proofOut)
+	proofOut.Close()
+	fmt.Println()
+
+	return nil
+}
+
+func verify(args []string) error {
+	f := flag.NewFlagSet("zkp verify", flag.ContinueOnError)
+	f.Bool("h", false, "")
+	var proofStr, vkStr string
+	var y int
+	f.IntVar(&y, "y", 0, "y")
+	f.StringVar(&proofStr, "proof", "", "")
+	f.StringVar(&vkStr, "vk", "", "")
+	err := f.Parse(args)
+	if err != nil {
+		return err
+	}
+	if proofStr == "" || vkStr == "" {
+		f.Usage()
+		return nil
+	}
+
+	proof := groth16.NewProof(ecc.BN254)
+	_, err = proof.ReadFrom(base64.NewDecoder(base64.StdEncoding, strings.NewReader(proofStr)))
+	if err != nil {
+		return fmt.Errorf("reading proof: %w", err)
+	}
+
+	vk := groth16.NewVerifyingKey(ecc.BN254)
+	_, err = vk.ReadFrom(base64.NewDecoder(base64.StdEncoding, strings.NewReader(vkStr)))
+	if err != nil {
+		return fmt.Errorf("reading verification key: %w", err)
+	}
+
+	var solution Circuit
+	solution.Y.Assign(y)
 
 	err = groth16.Verify(proof, vk, &solution)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("verifying: %w", err)
 	}
 	fmt.Println("Verified")
+
+	return nil
 }
