@@ -14,13 +14,14 @@ import (
 )
 
 type Circuit struct {
-	X frontend.Variable `gnark:"x"`
-	Y frontend.Variable `gnark:",public"`
+	X frontend.Variable `gnark:"x,public"`
+	Y frontend.Variable `gnark:"y"`
+	Z frontend.Variable `gnark:"z,public"`
 }
 
 func (c *Circuit) Define(curveID ecc.ID, cs *frontend.ConstraintSystem) error {
-	y := cs.Mul(c.X, c.X, c.X)
-	cs.AssertIsEqual(c.Y, y)
+	cs.AssertIsLessOrEqual(c.X, c.Y)
+	cs.AssertIsLessOrEqual(c.Y, c.Z)
 	return nil
 }
 
@@ -58,9 +59,10 @@ func root(args []string) error {
 func prove(args []string) error {
 	f := flag.NewFlagSet("zkp prove", flag.ContinueOnError)
 	f.Bool("h", false, "")
-	var x, y int
+	var x, y, z int
 	f.IntVar(&x, "x", 0, "x")
 	f.IntVar(&y, "y", 0, "y")
+	f.IntVar(&z, "z", 0, "z")
 	err := f.Parse(args)
 	if err != nil {
 		return err
@@ -86,6 +88,7 @@ func prove(args []string) error {
 	var solution Circuit
 	solution.X.Assign(x)
 	solution.Y.Assign(y)
+	solution.Z.Assign(z)
 
 	proof, err := groth16.Prove(r1cs, pk, &solution)
 	if err != nil {
@@ -104,8 +107,10 @@ func verify(args []string) error {
 	f := flag.NewFlagSet("zkp verify", flag.ContinueOnError)
 	f.Bool("h", false, "")
 	var proofStr, vkStr string
-	var y int
+	var x, y, z int
+	f.IntVar(&x, "x", 0, "x")
 	f.IntVar(&y, "y", 0, "y")
+	f.IntVar(&z, "z", 0, "z")
 	f.StringVar(&proofStr, "proof", "", "")
 	f.StringVar(&vkStr, "vk", "", "")
 	err := f.Parse(args)
@@ -130,7 +135,11 @@ func verify(args []string) error {
 	}
 
 	var solution Circuit
-	solution.Y.Assign(y)
+	solution.X.Assign(x)
+	if y != 0 {
+		solution.Y.Assign(y)
+	}
+	solution.Z.Assign(z)
 
 	err = groth16.Verify(proof, vk, &solution)
 	if err != nil {
