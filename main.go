@@ -107,9 +107,8 @@ func verify(args []string) error {
 	f := flag.NewFlagSet("zkp verify", flag.ContinueOnError)
 	f.Bool("h", false, "")
 	var proofStr, vkStr string
-	var x, y, z int
+	var x, z int
 	f.IntVar(&x, "x", 0, "x")
-	f.IntVar(&y, "y", 0, "y")
 	f.IntVar(&z, "z", 0, "z")
 	f.StringVar(&proofStr, "proof", "", "")
 	f.StringVar(&vkStr, "vk", "", "")
@@ -136,9 +135,6 @@ func verify(args []string) error {
 
 	var solution Circuit
 	solution.X.Assign(x)
-	if y != 0 {
-		solution.Y.Assign(y)
-	}
 	solution.Z.Assign(z)
 
 	err = groth16.Verify(proof, vk, &solution)
